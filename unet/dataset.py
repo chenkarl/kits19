@@ -56,7 +56,7 @@ class KidDataset(data.Dataset):
                 imgs.append([vol_ims[num], kid_seg_ims[num]])
         elif case_num < 210:
             for num in range(vol_ims.shape[0]):
-                if not np.all(kid_seg_ims[num]==0):
+                # if not np.all(kid_seg_ims[num]==0):
                     imgs.append([vol_ims[num], kid_seg_ims[num]])
         else:
             for num in range(vol_ims.shape[0]):
@@ -70,8 +70,8 @@ class KidDataset(data.Dataset):
         # img_x = Image.open(x_path)
         # img_y = Image.open(y_path)
         x,y = self.imgs[index]
-        from imageio import imwrite
-        from skimage import img_as_ubyte
+        # from imageio import imwrite
+        # from skimage import img_as_ubyte
         if self.transform is not None:
             # 将原图画出来
             # opath_seg = ("./orign/{:05d}.png".format(index))

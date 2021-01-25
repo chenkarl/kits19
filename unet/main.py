@@ -14,6 +14,8 @@ from skimage import img_as_ubyte
 import unet.model as model
 from unet.dataset import KidDataset
 
+# import unet.evaluation as eva
+
 import os
 os.environ["KMP_DUPLICATE_LIB_OK"]="TRUE"
 
@@ -57,11 +59,12 @@ def train():
     um = model.UNet(1, 1).to(device)
     batch_size = args.batch_size
     # 损失函数
-    # criterion = torch.nn.BCELoss() # 梯度下降
-    criterion = torch.nn.CrossEntropyLoss() #交叉熵损失函数
+    criterion = torch.nn.BCELoss() # 梯度下降 交叉熵应用于二分类时候的特殊形式
+    # criterion = torch.nn.CrossEntropyLoss() #交叉熵损失函数
     # 梯度下降
-    optimizer = optim.Adam(um.parameters(),lr=0.0001)  # model.parameters():Returns an iterator over module parameters
-    for i in range(210):
+    # optimizer = optim.Adam(um.parameters(),lr=0.0001)  # model.parameters():Returns an iterator over module parameters
+    optimizer = optim.Adam(um.parameters())
+    for i in range(200):#使用前200组数据训练，使用200-210组数据进行验证
         print("train_set_num : %d" % i)
         # 加载数据集
         kid_dataset = KidDataset(i, transform=x_transform, target_transform=y_transform)
@@ -74,23 +77,83 @@ def train():
         # num_workers：表示通过多个进程来导入数据，可以加快数据导入速度
         train_model(um, criterion, optimizer, dataloader)
 
+def dice(prec,label):
+    # 平滑变量
+    smooth = 1
+    # 将宽高 reshape 到同一纬度
+    input_flat = prec.view(1, -1)
+    targets_flat = label.view(1, -1)
+    # 计算交集
+    intersection = input_flat * targets_flat
+    d = (2 * intersection.sum(1) + smooth) / (input_flat.sum(1) + targets_flat.sum(1) + smooth)
+    # 计算一个批次中平均每张图的损失
+    return d.sum()
+
 def test():
     um = model.UNet(1, 1)
     um.load_state_dict(torch.load(args.weight, map_location='cpu'))
     # print(um.state_dict())
-    kid_dataset = KidDataset(100, transform=x_transform)
+    print('load dataset')
+    # 这里计算dice，因此会有y_transform
+    dic = 0
+    for k in range(200,210):
+        kid_dataset = KidDataset(k, transform=x_transform, target_transform=y_transform)
+        dataloaders = DataLoader(kid_dataset)  # batch_size默认为1
+        um.eval()
+        with torch.no_grad():
+            num = 0
+            case_dice = 0
+            # for x, _ in dataloaders:
+            for x, label in dataloaders:
+                print('start %d_%d picture' % (k,num))
+                y = um(x)
+                # print(y)
+                y=torch.squeeze(y)
+                # print(y)
+                y=y>0.5
+                # print(y)
+                case_dice = case_dice + dice(y,label)
+                print('dic',dic)
+                # img_y = y.numpy()
+                # print(img_y)
+                # fpath_seg = ("./predict/{:05d}.png".format(num))
+                # ubimg_y = img_as_ubyte(img_y)
+                # imwrite(str(fpath_seg), ubimg_y)
+                num = num + 1
+            case_dice_avg = case_dice / num
+            print("%d Dice is %.3f" %(k,case_dice_avg))
+            dic = dic + case_dice_avg
+        avg_dice = dic / 10
+        print("Dice is %.3f" %avg_dice)
+
+def prec():
+    um = model.UNet(1, 1)
+    um.load_state_dict(torch.load(args.weight, map_location='cpu'))
+    # print(um.state_dict())
+    print('load dataset')
+    case_id = 220
+    kid_dataset = KidDataset(case_id, transform=x_transform)
     dataloaders = DataLoader(kid_dataset)  # batch_size默认为1
     um.eval()
     with torch.no_grad():
         num = 0
+        dic = 0
         for x, _ in dataloaders:
+            print('print %d picture' % num)
             y = um(x)
-            img_y = torch.squeeze(y).numpy()
+            # print(y)
+            y=torch.squeeze(y)
+            # print(y)
+            y=y>0.5
+            # print(y)
+            # dic = dic + dice(y,label)
+            # print('dic',dic)
+            img_y = y.numpy()
+            # print(img_y)
             fpath_seg = ("./predict/{:05d}.png".format(num))
             ubimg_y = img_as_ubyte(img_y)
             imwrite(str(fpath_seg), ubimg_y)
             num = num + 1
-
 
 if __name__ == '__main__':
     # 参数解析
@@ -104,3 +167,5 @@ if __name__ == '__main__':
         train()
     elif args.action == 'test':
         test()
+    elif args.action == 'prec':
+        prec()
