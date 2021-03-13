@@ -2,3 +2,7 @@
 .vscode*
 data/case_*/imaging.nii.gz
 *.tmp
+/unet/old
+/unet/label
+/venv
+/.idea

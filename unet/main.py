@@ -14,6 +14,7 @@ from skimage import img_as_ubyte
 import unet.model as model
 from unet.dataset import KidDataset
 
+import random
 # import unet.evaluation as eva
 
 import os
@@ -21,6 +22,8 @@ os.environ["KMP_DUPLICATE_LIB_OK"]="TRUE"
 
 # 是否使用current cuda device or torch.device('cuda:0')
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+skip_case = [160] # 第160号，数据比例【 512, 796】不能读取
+
 
 x_transform = T.Compose([
     T.ToTensor(),
@@ -48,10 +51,9 @@ def train_model(model, criterion, optimizer, dataload, num_epochs=5):
             epoch_loss += loss.item()
             step += 1
             print("%d/%d,train_loss:%0.3f" % (step, dataset_size // dataload.batch_size, loss.item()))
-            # if epoch_loss < 0.001:
-            #     break
+            if epoch_loss < 0.001:
+                break
         print("epoch %d loss:%0.3f" % (epoch, epoch_loss))
-    torch.save(model.state_dict(), 'weights_%d.pth' % epoch)  # 返回模型的所有内容
     return model
 
 # 训练模型
@@ -63,19 +65,52 @@ def train():
     # criterion = torch.nn.CrossEntropyLoss() #交叉熵损失函数
     # 梯度下降
     # optimizer = optim.Adam(um.parameters(),lr=0.0001)  # model.parameters():Returns an iterator over module parameters
-    optimizer = optim.Adam(um.parameters())
-    for i in range(200):#使用前200组数据训练，使用200-210组数据进行验证
-        print("train_set_num : %d" % i)
-        # 加载数据集
-        kid_dataset = KidDataset(i, transform=x_transform, target_transform=y_transform)
-        dataloader = DataLoader(kid_dataset, batch_size=batch_size, shuffle=True, num_workers=8)
-        # liver_dataset = LiverDataset("data/train/", transform=x_transform, target_transform=y_transform)
-        # dataloader = DataLoader(liver_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
-        # DataLoader:该接口主要用来将自定义的数据读取接口的输出或者PyTorch已有的数据读取接口的输入按照batch size封装成Tensor
-        # batch_size：how many samples per minibatch to load，这里为4，数据集大小400，所以一共有100个minibatch
-        # shuffle:每个epoch将数据打乱，这里epoch=10。一般在训练数据中会采用
-        # num_workers：表示通过多个进程来导入数据，可以加快数据导入速度
-        train_model(um, criterion, optimizer, dataloader)
+    sum_dice = 0
+    fo=open('dice.txt','w')
+    # 使用十折交叉验证
+    for k in range(10):
+        optimizer = optim.Adam(um.parameters())
+        for j in range(10):
+            if k==j: #第j组做验证组
+                continue
+            for i in range(21):#使用前200组数据训练，使用200-210组数据进行验证
+                case_id = 21*j + i
+                if case_id in skip_case:
+                    print('第%d数据已跳过' %case_id)
+                    continue
+                print("第%d_%d次训练,训练集%d" % (k,i,case_id))
+                # 加载数据集
+                kid_dataset = KidDataset(case_id, transform=x_transform, target_transform=y_transform)
+                dataloader = DataLoader(kid_dataset, batch_size=batch_size, shuffle=True, num_workers=8)
+                # DataLoader:该接口主要用来将自定义的数据读取接口的输出或者PyTorch已有的数据读取接口的输入按照batch size封装成Tensor
+                # batch_size：how many samples per minibatch to load，这里为4，数据集大小400，所以一共有100个minibatch
+                # shuffle:每个epoch将数据打乱，这里epoch=10。一般在训练数据中会采用
+                # num_workers：表示通过多个进程来导入数据，可以加快数据导入速度
+                um=train_model(um, criterion, optimizer, dataloader)
+                torch.save(um.state_dict(), 'weights_%d_%d.pth' % (k,batch_size))  # 返回模型的所有内容
+        single_dice = 0
+        for i in range(21): #第k组做验证
+            single_dice = sum_dice+verify(um,21*k + i)
+        print('第 %d 次验证，dice为 %.3f' %(k,single_dice/21))
+        fo.write('第 %d 次验证，dice为 %.3f' %(k,single_dice/21))
+        sum_dice = sum_dice + single_dice/21
+    print('十折验证后，dice为 %.3f' %(k,sum_dice/10))
+    fo.write('十折验证后，dice为 %.3f' %(k,sum_dice/10))
+    fo.close()
+
+def verify(model,case_id):
+    kid_dataset = KidDataset(case_id, transform=x_transform, target_transform=y_transform)
+    dataloaders = DataLoader(kid_dataset)  # batch_size默认为1
+    model.eval()
+    with torch.no_grad():
+        num = 0
+        case_dice = 0
+        for x, label in dataloaders:
+            y = model(x)
+            case_dice = case_dice + dice(torch.squeeze(y)>0.5,label)
+            num = num + 1
+        return case_dice / num
+
 
 def dice(prec,label):
     # 平滑变量
@@ -96,7 +131,7 @@ def test():
     print('load dataset')
     # 这里计算dice，因此会有y_transform
     dic = 0
-    for k in range(200,210):
+    for k in range(1,2):
         kid_dataset = KidDataset(k, transform=x_transform, target_transform=y_transform)
         dataloaders = DataLoader(kid_dataset)  # batch_size默认为1
         um.eval()
